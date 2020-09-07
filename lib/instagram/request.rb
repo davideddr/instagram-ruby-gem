@@ -5,8 +5,8 @@ module Instagram
   # Defines HTTP request methods
   module Request
     # Perform an HTTP GET request
-    def get(path, options={}, signature=false, raw=false, unformatted=false, no_response_wrapper=no_response_wrapper(), signed=sign_requests)
-      request(:get, path, options, signature, raw, unformatted, no_response_wrapper, signed)
+    def get(path, options={}, signature=false, raw=false, unformatted=false, no_response_wrapper=no_response_wrapper(), signed=sign_requests, new_api=false)
+      request(:get, path, options, signature, raw, unformatted, no_response_wrapper, signed, new_api)
     end
 
     # Perform an HTTP POST request
@@ -27,36 +27,41 @@ module Instagram
     private
 
     # Perform an HTTP request
-    def request(method, path, options, signature=false, raw=false, unformatted=false, no_response_wrapper=false, signed=sign_requests)
-      response = connection(raw).send(method) do |request|
-        path = formatted_path(path) unless unformatted
-        
-        if signed == true
-          if client_id != nil
-            sig_options = options.merge({:client_id => client_id})
+    def request(method, path, options, signature=false, raw=false, unformatted=false, no_response_wrapper=false, signed=sign_requests, new_api=false)
+      begin
+        request_connection = new_api ? connection_new_api(raw) : connection(raw)
+        response = request_connection.send(method) do |request|
+          path = formatted_path(path) unless unformatted || new_api
+
+          if signed == true
+            if client_id != nil
+              sig_options = options.merge({:client_id => client_id})
+            end
+            if access_token != nil
+              sig_options = options.merge({:access_token => access_token})
+            end
+            sig = generate_sig("/"+path, sig_options, client_secret)
+            options[:sig] = sig
           end
-          if access_token != nil
-            sig_options = options.merge({:access_token => access_token})
+
+          case method
+          when :get, :delete
+            request.url(URI.encode(path), options)
+          when :post, :put
+            request.path = URI.encode(path)
+            request.body = options unless options.empty?
           end
-          sig = generate_sig("/"+path, sig_options, client_secret)
-          options[:sig] = sig
+          if signature && client_ips != nil
+            request.headers['X-Insta-Forwarded-For'] = get_insta_fowarded_for(client_ips, client_secret)
+          end
         end
-        
-        case method
-        when :get, :delete
-          request.url(URI.encode(path), options)
-        when :post, :put
-          request.path = URI.encode(path)
-          request.body = options unless options.empty?
-        end
-        if signature && client_ips != nil
-          request.headers["X-Insta-Forwarded-For"] = get_insta_fowarded_for(client_ips, client_secret)
-        end
+      rescue => exception
+        # puts "Error = #{exception}"
       end
       return response if raw
       return response.body if no_response_wrapper
-      return Response.create( response.body, {:limit => response.headers['x-ratelimit-limit'].to_i,
-                                              :remaining => response.headers['x-ratelimit-remaining'].to_i} )
+
+      Response.create(response.body, {limit: response.headers['x-ratelimit-limit'].to_i, remaining: response.headers['x-ratelimit-remaining'].to_i})
     end
 
     def formatted_path(path)
@@ -64,9 +69,10 @@ module Instagram
     end
 
     def get_insta_fowarded_for(ips, secret)
-        digest = OpenSSL::Digest.new('sha256')
-        signature = OpenSSL::HMAC.hexdigest(digest, secret, ips)
-        return [ips, signature].join('|')
+      digest = OpenSSL::Digest.new('sha256')
+      signature = OpenSSL::HMAC.hexdigest(digest, secret, ips)
+
+      [ips, signature].join('|')
     end
 
     def generate_sig(endpoint, params, secret)
@@ -75,8 +81,8 @@ module Instagram
         sig += '|%s=%s' % [key, val]
       end
       digest = OpenSSL::Digest::Digest.new('sha256')
-      return OpenSSL::HMAC.hexdigest(digest, secret, sig)
-    end
 
+      OpenSSL::HMAC.hexdigest(digest, secret, sig)
+    end
   end
 end

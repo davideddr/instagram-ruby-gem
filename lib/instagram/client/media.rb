@@ -77,6 +77,11 @@ module Instagram
         response = get('media/search', options.merge(:lat => lat, :lng => lng))
         response
       end
+
+      # Returns the first 25 medias of account
+      def all_media_paginated(fields)
+        get('me/media', { fields: fields }, false, false, false, false, false, true)
+      end
     end
   end
 end
